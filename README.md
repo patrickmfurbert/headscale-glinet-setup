@@ -357,7 +357,7 @@ tailscale status
 
 ## How the Switch Chain Works
 
-When the physical switch is toggled:
+**On toggle (runtime):**
 
 1. **Hardware** — GPIO pin change detected by the kernel
 2. **Kernel** — fires a hotplug event: `BUTTON=switch ACTION=pressed/released`
@@ -366,7 +366,13 @@ When the physical switch is toggled:
 5. **`/etc/gl-switch.d/tailscale.sh`** — called with `on` or `off` argument
 6. **Tailscale** — connects to or disconnects from the headscale mesh
 
+**On boot:**
+
+GL.iNet ships a built-in init script `/etc/init.d/gl_switch_button_check` (START=99) that reads the physical switch position on every boot using `get_switch_button_status` from `gl_util.sh`. It reads `/sys/kernel/debug/gpio` directly to determine if the switch is `hi` (off) or `lo` (on), then fires `/etc/rc.button/switch` with the appropriate action. This means Tailscale automatically comes up on boot if the switch is in the on position — no additional boot logic is needed.
+
 The UCI config is the only piece connecting the generic switch mechanism to the Tailscale script. The GL.iNet web UI can overwrite this value, which is why the UCI commands are added to `/etc/rc.local` — they restore the correct value on every boot.
+
+**Important:** Do not add Tailscale startup logic to `/etc/rc.local`. The `gl_switch_button_check` init script already handles boot state. Adding a duplicate call causes a race condition where two `tailscale up` commands run simultaneously and both fail.
 
 ---
 
@@ -377,6 +383,8 @@ The UCI config is the only piece connecting the generic switch mechanism to the 
 - **Headscale going down** — existing WireGuard connections between nodes stay up; nodes cache their peer list locally and can reconnect to known peers on reboot even if headscale is temporarily unreachable
 - **UI overwrites** — changing the switch function in the GL.iNet web UI will overwrite the UCI config; the rc.local fix restores it on next reboot
 - **DERP relays** — headscale uses Tailscale's DERP relay servers as fallback when direct WireGuard connections cannot be established; traffic through DERP is still end-to-end encrypted and Tailscale cannot read it
+- **accept-routes** — other nodes on the mesh must run `tailscale up --accept-routes --login-server <URL>` to receive and use advertised subnet routes from the router
+- **Boot state** — the GL.iNet `gl_switch_button_check` init script handles Tailscale boot state automatically by reading the physical switch position; do not duplicate this in rc.local
 
 ---
 
@@ -410,4 +418,10 @@ uci get switch-button.@main[0].func
 # Manually test switch script
 sh /etc/gl-switch.d/tailscale.sh on
 sh /etc/gl-switch.d/tailscale.sh off
+
+# Enable accepting advertised routes on a node (run on each non-router mesh node)
+sudo tailscale up --accept-routes --login-server https://headscale.example.com
+
+# Check physical switch state on the router
+. /lib/functions/gl_util.sh && get_switch_button_status
 ```
